@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math/rand"
+	"strings"
 	"time"
 
 	"github.com/coroot/coroot-node-agent/api"
@@ -131,13 +132,37 @@ func (t *Trace) createSpan(name string, duration time.Duration, error bool, attr
 	}
 
 	start := end.Add(-duration)
+	name = sanitizeString(name)
 	_, span := t.tracer.otel.Start(nil, name, trace.WithTimestamp(start), trace.WithSpanKind(trace.SpanKindClient))
-	span.SetAttributes(attrs...)
-	span.SetAttributes(t.commonAttrs...)
+	span.SetAttributes(sanitizeAttributes(attrs)...)
+	span.SetAttributes(sanitizeAttributes(t.commonAttrs)...)
 	if error {
 		span.SetStatus(codes.Error, "")
 	}
 	span.End(trace.WithTimestamp(end))
+}
+
+func sanitizeAttributes(attrs []attribute.KeyValue) []attribute.KeyValue {
+	for i, attr := range attrs {
+		attr.Key = attribute.Key(sanitizeString(string(attr.Key)))
+		switch attr.Value.Type() {
+		case attribute.STRING:
+			attr.Value = attribute.StringValue(sanitizeString(attr.Value.AsString()))
+		case attribute.STRINGSLICE:
+			values := attr.Value.AsStringSlice()
+			sanitized := make([]string, len(values))
+			for i, value := range values {
+				sanitized[i] = sanitizeString(value)
+			}
+			attr.Value = attribute.StringSliceValue(sanitized)
+		}
+		attrs[i] = attr
+	}
+	return attrs
+}
+
+func sanitizeString(s string) string {
+	return strings.ToValidUTF8(s, "?")
 }
 
 func (t *Trace) HttpRequest(method, path string, status l7.Status, duration time.Duration) {
